@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Candy Car Race Pro - Ultimate</title>
+<style>
+body {
+  margin:0;
+  background: linear-gradient(to bottom, #FFB6FF, #87CEEB);
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+  overflow:hidden;
+  user-select:none;
+  font-family: 'Comic Sans MS', cursive, sans-serif;
+}
+canvas {
+  border:6px solid #FF69B4;
+  border-radius:25px;
+  box-shadow:0 0 40px pink;
+  background: #444;
+}
+.btn {
+  position:absolute;
+  width:80px;
+  height:80px;
+  background: linear-gradient(45deg, #FFD700, #FF69B4);
+  border:4px solid white;
+  border-radius:50%;
+  color:white;
+  font-size:20px;
+  font-weight:bold;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  box-shadow:0 5px 20px rgba(0,0,0,0.3);
+  cursor: pointer;
+  z-index: 5;
+}
+.btn:active { transform: scale(0.9); }
+#left{bottom:40px; left:30px;}
+#right{bottom:40px; right:30px;}
+#gas{
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90px;
+  height: 90px;
+  background: linear-gradient(45deg, #00FF00, #00CED1);
+}
+.ui-text {
+  position:absolute;
+  color:#FF1493;
+  font-weight:bold;
+  text-shadow:2px 2px 0px white;
+}
+#score{top:20px; left:20px; font-size:22px;}
+#level{top:50px; left:20px; font-size:18px;}
+#lives{top:80px; left:20px; font-size:18px;}
+#highscore{top:20px; right:20px; color:#FFD700; font-size:18px;}
+
+/* Game Over Overlay */
+#gameover-screen {
+  position: absolute;
+  width: 400px;
+  height: 700px;
+  background: rgba(0, 0, 0, 0.75);
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  border-radius: 20px;
+  color: white;
+  z-index: 10;
+}
+#gameover-screen h1 {
+  color: #FF69B4;
+  font-size: 36px;
+  text-shadow: 2px 2px #fff;
+  margin-bottom: 10px;
+}
+#restart-btn {
+  padding: 12px 30px;
+  background: linear-gradient(45deg, #00FF00, #00CED1);
+  border: 3px solid white;
+  border-radius: 25px;
+  color: white;
+  font-size: 20px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+  margin-top: 20px;
+}
+#restart-btn:active { transform: scale(0.95); }
+</style>
+</head>
+<body>
+
+<div id="score" class="ui-text">Score: 0 🍬</div>
+<div id="level" class="ui-text">Level: 1</div>
+<div id="lives" class="ui-text">Lives: ❤️❤️❤️</div>
+<div id="highscore" class="ui-text">Best: 0</div>
+
+<div id="gameover-screen">
+  <h1>Game Over!</h1>
+  <p id="final-score" style="font-size: 22px; margin: 5px;">Score: 0</p>
+  <p id="final-best" style="font-size: 18px; color: #FFD700; margin: 5px;">Best: 0</p>
+  <button id="restart-btn" onclick="restartGame()">Play Again</button>
+</div>
+
+<canvas id="game" width="400" height="700"></canvas>
+
+<div class="btn" id="left">←</div>
+<div class="btn" id="gas">GO!</div>
+<div class="btn" id="right">→</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+let player = {x:200, y:600, speed:4, baseSpeed:4, boost:0};
+let candies = [];
+let obstacles = [];
+let particles = [];
+let score = 0;
+let level = 1;
+let lives = 3;
+let isGameOver = false;
+let keys = {left:false, right:false, gas:false};
+let roadY = 0;
+let spawnTimer = 0;
+let highScore = localStorage.getItem('candyHighScore') || 0;
+document.getElementById('highscore').innerText = "Best: " + highScore;
+
+const lanes = [110, 200, 290];
+const candyColors = ['#FF69B4', '#FFD700', '#00CED1', '#98FB98'];
+
+// Web Audio API & Reliable Background Music
+let audioCtx = null;
+let bgmTimer = null;
+let musicStarted = false;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  if (!musicStarted) {
+    musicStarted = true;
+    startBGM();
+  }
+}
+
+function startBGM() {
+  const melody = [261.63, 329.63, 392.00, 523.25, 392.00, 329.63]; // সুরের নোটস
+  let noteIndex = 0;
+
+  bgmTimer = setInterval(() => {
+    if (isGameOver || !audioCtx || audioCtx.state !== 'running') return;
+    
+    let osc = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(melody[noteIndex], audioCtx.currentTime);
+    
+    gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+    
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.35);
+    
+    noteIndex = (noteIndex + 1) % melody.length;
+  }, 450);
+}
+
+function playSound(type) {
+  if (!audioCtx) return;
+  if(audioCtx.state === 'suspended') { audioCtx.resume(); }
+  
+  let osc = audioCtx.createOscillator();
+  let gainNode = audioCtx.createGain();
+  osc.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  let now = audioCtx.currentTime;
+
+  if (type === 'coin') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, now);
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+    gainNode.gain.setValueAtTime(0.15, now);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.15);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  } else if (type === 'hit') {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.linearRampToValueAtTime(40, now + 0.2);
+    gainNode.gain.setValueAtTime(0.3, now);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.2);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  } else if (type === 'heart') {
+    // লাইফ বাড়ার সাউন্ড
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(440, now);
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.25);
+    gainNode.gain.setValueAtTime(0.2, now);
+    gainNode.gain.linearRampToValueAtTime(0, now + 0.25);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+}
+
+// Initial Map Setup
+function initEntities() {
+  candies = [];
+  obstacles = [];
+  for(let i=0; i<8; i++){
+    candies.push({
+      x: lanes[Math.floor(Math.random()*3)],
+      y: i*90 - 300,
+      color: candyColors[Math.floor(Math.random()*4)],
+      type: 'normal'
+    });
+  }
+  for(let i=0; i<4; i++){
+    obstacles.push({
+      x: lanes[Math.floor(Math.random()*3)],
+      y: i*150 - 400,
+      type: Math.random() > 0.5? 'bomb' : 'car'
+    });
+  }
+}
+initEntities();
+
+// Controls (Touch, Mouse & Audio Trigger)
+function setKey(k, v){ 
+  keys[k] = v; 
+  initAudio();
+}
+
+['touchstart','mousedown'].forEach(e=>{
+  document.getElementById('left').addEventListener(e,()=>setKey('left',true));
+  document.getElementById('right').addEventListener(e,()=>setKey('right',true));
+  document.getElementById('gas').addEventListener(e,()=>setKey('gas',true));
+  window.addEventListener(e, ()=> initAudio(), {once: true});
+});
+['touchend','mouseup'].forEach(e=>{
+  document.getElementById('left').addEventListener(e,()=>setKey('left',false));
+  document.getElementById('right').addEventListener(e,()=>setKey('right',false));
+  document.getElementById('gas').addEventListener(e,()=>setKey('gas',false));
+});
+
+// Keyboard Support
+window.addEventListener('keydown', e => {
+  initAudio();
+  if(e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
+  if(e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
+  if(e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') keys.gas = true;
+});
+window.addEventListener('keyup', e => {
+  if(e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
+  if(e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
+  if(e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') keys.gas = false;
+});
+
+function addParticles(x, y, color){
+  for(let i=0; i<10; i++){
+    particles.push({
+      x: x, y: y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6,
+      life: 25,
+      color: color
+    });
+  }
+}
+
+function update(){
+  if(isGameOver) return;
+
+  let targetSpeed = keys.gas ? 7 : 4;
+  if(player.boost > 0) targetSpeed += 4;
+  player.speed = targetSpeed + level * 0.25;
+  if(player.boost > 0) player.boost--;
+
+  if(keys.left) player.x -= 6.5;
+  if(keys.right) player.x += 6.5;
+  player.x = Math.max(90, Math.min(310, player.x));
+  roadY += player.speed;
+
+  let newLevel = Math.floor(score / 250) + 1;
+  if(newLevel > level){
+    level = newLevel;
+    document.getElementById('level').innerText = "Level: " + level;
+  }
+
+  spawnTimer += player.speed;
+  if(spawnTimer > 55 - level*2){
+    spawnTimer = 0;
+    if(Math.random() < 0.35){
+      // র‍্যান্ডম ক্যান্ডি অথবা লাইফ বাড়ানোর হার্ট ক্যান্ডি (❤️)
+      let cType = 'normal';
+      let cColor = candyColors[Math.floor(Math.random()*4)];
+      
+      if(Math.random() < 0.1) {
+        cType = 'heart'; // লাইফ দেওয়ার ক্যান্ডি
+      } else if(Math.random() < 0.08) {
+        cType = 'rainbow';
+      }
+
+      candies.push({
+        x: lanes[Math.floor(Math.random()*3)],
+        y: -50,
+        color: cColor,
+        type: cType
+      });
+    }
+    if(Math.random() < 0.25 + level*0.01){
+      obstacles.push({
+        x: lanes[Math.floor(Math.random()*3)],
+        y: -50,
+        type: Math.random() > 0.5 ? 'bomb' : 'car'
+      });
+    }
+  }
+
+  candies.forEach((c, i)=>{
+    c.y += player.speed;
+    if(c.y > 750) candies.splice(i, 1);
+
+    if(Math.abs(player.x - c.x) < 32 && Math.abs(player.y - c.y) < 32){
+      if(c.type === 'heart'){
+        if(lives < 5) lives++; // সর্বোচ্চ ৫টি লাইফ হতে পারবে
+        playSound('heart');
+        addParticles(c.x, c.y, '#FF0000');
+        updateLivesUI();
+      } else if(c.type === 'rainbow'){
+        score += 60;
+        player.boost = 200;
+        playSound('coin');
+      } else {
+        score += 15;
+        playSound('coin');
+      }
+      
+      addParticles(c.x, c.y, c.color);
+      document.getElementById('score').innerText = "Score: " + score + " 🍬";
+      candies.splice(i, 1);
+      
+      if(score > highScore){
+        highScore = score;
+        localStorage.setItem('candyHighScore', highScore);
+        document.getElementById('highscore').innerText = "Best: " + highScore;
+      }
+    }
+  });
+
+  obstacles.forEach((o, i)=>{
+    o.y += player.speed;
+    if(o.y > 750) obstacles.splice(i, 1);
+
+    if(Math.abs(player.x - o.x) < 32 && Math.abs(player.y - o.y) < 32){
+      lives--;
+      player.speed = player.baseSpeed;
+      playSound('hit');
+      addParticles(o.x, o.y, '#FF0000');
+      obstacles.splice(i, 1);
+      
+      updateLivesUI();
+      if(lives <= 0){
+        triggerGameOver();
+      }
+    }
+  });
+
+  particles.forEach((p, i)=>{
+    p.x += p.vx; 
+    p.y += p.vy; 
+    p.life--;
+    if(p.life <= 0) particles.splice(i, 1);
+  });
+}
+
+function updateLivesUI(){
+  let hearts = "";
+  for(let i=0; i<lives; i++) hearts += "❤️";
+  document.getElementById('lives').innerText = "Lives: " + (hearts || "❌");
+}
+
+function triggerGameOver(){
+  isGameOver = true;
+  document.getElementById('final-score').innerText = "Score: " + score;
+  document.getElementById('final-best').innerText = "Best: " + highScore;
+  document.getElementById('gameover-screen').style.display = "flex";
+}
+
+function restartGame(){
+  score = 0;
+  level = 1;
+  lives = 3;
+  player.x = 200;
+  player.boost = 0;
+  isGameOver = false;
+  document.getElementById('score').innerText = "Score: 0 🍬";
+  document.getElementById('level').innerText = "Level: 1";
+  updateLivesUI();
+  document.getElementById('gameover-screen').style.display = "none";
+  initEntities();
+}
+
+function drawCandy(x, y, color, type){
+  if(type === 'heart'){
+    ctx.fillStyle = '#FF0000';
+    ctx.font = '24px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('❤️', x, y + 8);
+    return;
+  }
+  
+  if(type === 'rainbow'){
+    ctx.fillStyle = `hsl(${Date.now()/15 % 360}, 100%, 50%)`;
+    ctx.shadowColor = 'white';
+    ctx.shadowBlur = 15;
+  } else {
+    ctx.fillStyle = color;
+    ctx.shadowBlur = 0;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, 16, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = 'white';
+  ctx.fillRect(x-16, y-3, 32, 6);
+  ctx.shadowBlur = 0;
+}
+
+function drawObstacle(x, y, type){
+  if(type === 'bomb'){
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'red'; ctx.fillRect(x-3, y-26, 6, 10);
+  } else {
+    ctx.fillStyle = '#222';
+    ctx.fillRect(x-20, y-16, 40, 32);
+    ctx.fillStyle = '#FF3333';
+    ctx.fillRect(x-16, y-6, 32, 6);
+  }
+}
+
+function drawCar(x, y){
+  ctx.fillStyle = player.boost > 0 ? '#00FFFF' : '#FF1493';
+  ctx.beginPath();
+  ctx.roundRect(x-20, y-26, 40, 52, 14);
+  ctx.fill();
+
+  if(player.boost > 0){
+    ctx.fillStyle = '#FFA500';
+    ctx.beginPath();
+    ctx.moveTo(x-10, y+26); 
+    ctx.lineTo(x, y+38 + Math.random()*8); 
+    ctx.lineTo(x+10, y+26);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = 'white';
+  ctx.beginPath(); ctx.arc(x-8, y-10, 6, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+8, y-10, 6, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'black';
+  ctx.beginPath(); ctx.arc(x-8, y-10, 3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+8, y-10, 3, 0, Math.PI*2); ctx.fill();
+}
+
+function draw(){
+  ctx.fillStyle = '#87CEEB'; ctx.fillRect(0, 0, 400, 300);
+  ctx.fillStyle = '#98FB98'; ctx.fillRect(0, 300, 400, 400);
+
+  ctx.fillStyle = '#333'; ctx.fillRect(80, 0, 240, 700);
+  ctx.strokeStyle = 'white'; ctx.lineWidth = 5;
+  ctx.setLineDash([30, 30]);
+  ctx.beginPath(); ctx.moveTo(200, roadY%60); ctx.lineTo(200, 700); ctx.stroke();
+  ctx.setLineDash([]);
+
+  candies.forEach(c => drawCandy(c.x, c.y, c.color, c.type));
+  obstacles.forEach(o => drawObstacle(o.x, o.y, o.type));
+
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life / 25;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+
+  drawCar(player.x, player.y);
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
